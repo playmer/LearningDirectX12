@@ -1,4 +1,4 @@
-cmake_minimum_required( VERSION 3.12.0 ) # Latest version of CMake when this file was created.
+cmake_minimum_required( VERSION 3.14.0 ) # Latest version of CMake when this file was created.
 
 # Use solution folders to organize projects
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -32,6 +32,9 @@ add_subdirectory( Tutorial1 )
 add_subdirectory( Tutorial2 )
 add_subdirectory( Tutorial3 )
 add_subdirectory( Tutorial4 )
+
+add_subdirectory( DX12Renderer )
+add_subdirectory( MyTesting )
 
 # Set the startup project.
 set_directory_properties( PROPERTIES 
