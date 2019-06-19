@@ -33,6 +33,7 @@ using namespace Microsoft::WRL;
 
 #include "DX12Renderer/Renderer.hpp"
 
+#include <optional>
 #include <queue>
 
 // From DXSampleHelper.h 
@@ -71,14 +72,14 @@ public:
     return mQueue.Get();
   }
 
-  auto operator&()
+  auto& operator&()
   {
-    return &mQueue;
+    return mQueue;
   }
 
-  auto operator&() const
+  auto& operator&() const
   {
-    return &mQueue;
+    return mQueue;
   }
 
   Microsoft::WRL::ComPtr<ID3D12CommandQueue> GetD3D12CommandQueue() const
@@ -140,20 +141,22 @@ public:
 
   // DirectX 12 Objects
   ComPtr<ID3D12Device2> mDevice;
-  ComPtr<ID3D12CommandQueue> mQueue;
+  std::optional<Dx12Queue> mGraphicsQueue;
+  std::optional<Dx12Queue> mComputeQueue;
+  std::optional<Dx12Queue> mTransferQueue;
   ComPtr<IDXGISwapChain4> mSwapChain;
   ComPtr<ID3D12Resource> mBackBuffers[g_NumFrames];
-  ComPtr<ID3D12GraphicsCommandList> mCommandList;
+  //ComPtr<ID3D12GraphicsCommandList> mCommandList;
   ComPtr<ID3D12CommandAllocator> mCommandAllocators[g_NumFrames];
   ComPtr<ID3D12DescriptorHeap> mRTVDescriptorHeap;
   UINT mRTVDescriptorSize;
   UINT mCurrentBackBufferIndex;
   
   // Synchronization objects
-  ComPtr<ID3D12Fence> g_Fence;
-  uint64_t g_FenceValue = 0;
-  uint64_t g_FrameFenceValues[g_NumFrames] = {};
-  HANDLE g_FenceEvent;
+  //ComPtr<ID3D12Fence> g_Fence;
+  //uint64_t g_FenceValue = 0;
+  uint64_t mFrameFenceValues[g_NumFrames] = {};
+  //HANDLE g_FenceEvent;
 
 
   bool g_UseWarp = false;

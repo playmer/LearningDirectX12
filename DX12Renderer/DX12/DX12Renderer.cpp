@@ -289,6 +289,8 @@ HANDLE CreateEventHandle()
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Dx12Queue
 Dx12Queue::Dx12Queue(Microsoft::WRL::ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type)
+  : mCommandListType{type}
+  , mDevice{ device }
 {
   D3D12_COMMAND_QUEUE_DESC desc = {};
   desc.Type = type;
@@ -296,8 +298,8 @@ Dx12Queue::Dx12Queue(Microsoft::WRL::ComPtr<ID3D12Device2> device, D3D12_COMMAND
   desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
   desc.NodeMask = 0;
 
-  ThrowIfFailed(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&mQueue)));
-  ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence)));
+  ThrowIfFailed(mDevice->CreateCommandQueue(&desc, IID_PPV_ARGS(&mQueue)));
+  ThrowIfFailed(mDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence)));
 
   mFenceEvent = ::CreateEvent(NULL, FALSE, FALSE, NULL);
   assert(mFenceEvent && "Failed to create fence event handle.");
@@ -327,14 +329,66 @@ Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> Dx12Queue::CreateCommandList(
 // Get an available command list from the command queue.
 Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> Dx12Queue::GetCommandList()
 {
+  Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator;
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList;
 
+  if (!mCommandAllocatorQueue.empty() && IsFenceComplete(mCommandAllocatorQueue.front().fenceValue))
+  {
+    commandAllocator = mCommandAllocatorQueue.front().commandAllocator;
+    mCommandAllocatorQueue.pop();
+
+    ThrowIfFailed(commandAllocator->Reset());
+  }
+  else
+  {
+    commandAllocator = CreateCommandAllocator();
+  }
+
+  if (!mCommandListQueue.empty())
+  {
+    commandList = mCommandListQueue.front();
+    mCommandListQueue.pop();
+
+    ThrowIfFailed(commandList->Reset(commandAllocator.Get(), nullptr));
+  }
+  else
+  {
+    commandList = CreateCommandList(commandAllocator);
+  }
+
+  // Associate the command allocator with the command list so that it can be
+  // retrieved when the command list is executed.
+  ThrowIfFailed(commandList->SetPrivateDataInterface(__uuidof(ID3D12CommandAllocator), commandAllocator.Get()));
+
+  return commandList;
 }
 
 // Execute a command list.
 // Returns the fence value to wait for for this command list.
 uint64_t Dx12Queue::ExecuteCommandList(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList)
 {
-  mQueue->ExecuteCommandLists(1, commandList.Get());
+  commandList->Close();
+
+  ID3D12CommandAllocator* commandAllocator;
+  UINT dataSize = sizeof(commandAllocator);
+  ThrowIfFailed(commandList->GetPrivateData(__uuidof(ID3D12CommandAllocator), &dataSize, &commandAllocator));
+  
+  ID3D12CommandList* const ppCommandLists[] = {
+      commandList.Get()
+  };
+  
+  mQueue->ExecuteCommandLists(1, ppCommandLists);
+  uint64_t fenceValue = Signal();
+  
+  mCommandAllocatorQueue.emplace(CommandAllocatorEntry{ fenceValue, commandAllocator });
+  mCommandListQueue.push(commandList);
+  
+  // The ownership of the command allocator has been transferred to the ComPtr
+  // in the command allocator queue. It is safe to release the reference 
+  // in this temporary COM pointer here.
+  commandAllocator->Release();
+
+  return fenceValue;
 }
 
 uint64_t Dx12Queue::Signal()
@@ -536,9 +590,11 @@ Dx12Renderer::Dx12Renderer()
 
   mDevice = CreateDevice(dxgiAdapter4);
 
-  mQueue = CreateCommandQueue(mDevice, D3D12_COMMAND_LIST_TYPE_DIRECT);
+  mGraphicsQueue.emplace(mDevice, D3D12_COMMAND_LIST_TYPE_DIRECT);
+  mComputeQueue.emplace(mDevice, D3D12_COMMAND_LIST_TYPE_COMPUTE);
+  mTransferQueue.emplace(mDevice, D3D12_COMMAND_LIST_TYPE_COPY);
 
-  mSwapChain = CreateSwapChain(mWindowHandle, factory, mQueue, g_ClientWidth, g_ClientHeight, g_NumFrames);
+  mSwapChain = CreateSwapChain(mWindowHandle, factory, &(*mGraphicsQueue), g_ClientWidth, g_ClientHeight, g_NumFrames);
 
   mCurrentBackBufferIndex = mSwapChain->GetCurrentBackBufferIndex();
 
@@ -552,13 +608,8 @@ Dx12Renderer::Dx12Renderer()
     mCommandAllocators[i] = CreateCommandAllocator(mDevice, D3D12_COMMAND_LIST_TYPE_DIRECT);
   }
 
-  mCommandList = CreateCommandList(
-    mDevice, 
-    mCommandAllocators[mCurrentBackBufferIndex], 
-    D3D12_COMMAND_LIST_TYPE_DIRECT);
-
-  g_Fence = CreateFence(mDevice);
-  g_FenceEvent = CreateEventHandle();
+  //g_Fence = CreateFence(mDevice);
+  //g_FenceEvent = CreateEventHandle();
 
   ::ShowWindow(mWindowHandle, SW_SHOW);
 }
@@ -566,9 +617,9 @@ Dx12Renderer::Dx12Renderer()
 Dx12Renderer::~Dx12Renderer()
 {    
   // Make sure the command queue has finished all commands before closing.
-  Flush(mQueue, g_Fence, g_FenceValue, g_FenceEvent);
-
-  ::CloseHandle(g_FenceEvent);
+  mGraphicsQueue->Flush();
+  mComputeQueue->Flush();
+  mTransferQueue->Flush();
 }
 
 std::unique_ptr<InstantiatedModel> Dx12Renderer::CreateModel(std::string& aMeshFile)
@@ -618,11 +669,33 @@ void Dx12Renderer::Update()
 
 void Dx12Renderer::Render()
 {
-  auto commandAllocator = mCommandAllocators[mCurrentBackBufferIndex];
   auto backBuffer = mBackBuffers[mCurrentBackBufferIndex];
 
-  commandAllocator->Reset();
-  mCommandList->Reset(commandAllocator.Get(), nullptr);
+  //auto commandAllocator = mCommandAllocators[mCurrentBackBufferIndex];
+  //
+  //commandAllocator->Reset();
+  //mCommandList->Reset(commandAllocator.Get(), nullptr);
+
+
+
+
+
+
+
+  //auto commandQueue = Application::Get().GetCommandQueue(D3D12_COMMAND_LIST_TYPE_DIRECT);
+  auto commandList = mGraphicsQueue->GetCommandList();
+  
+
+
+
+
+
+
+
+
+
+
+
 
   // Clear the render target.
   {
@@ -630,14 +703,14 @@ void Dx12Renderer::Render()
       backBuffer.Get(),
       D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    mCommandList->ResourceBarrier(1, &barrier);
+    commandList->ResourceBarrier(1, &barrier);
     FLOAT clearColor[] = { 0.4f, 0.6f, 0.9f, 1.0f };
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(
       mRTVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
       mCurrentBackBufferIndex, 
       mRTVDescriptorSize);
 
-    mCommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+    commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
   }
 
   // Present
@@ -645,22 +718,19 @@ void Dx12Renderer::Render()
     CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
       backBuffer.Get(),
       D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-    mCommandList->ResourceBarrier(1, &barrier);
-    ThrowIfFailed(mCommandList->Close());
+    commandList->ResourceBarrier(1, &barrier);
+    ThrowIfFailed(commandList->Close());
 
-    ID3D12CommandList* const commandLists[] = {
-        mCommandList.Get()
-    };
+    mFrameFenceValues[mCurrentBackBufferIndex] = mGraphicsQueue->ExecuteCommandList(commandList);
 
-    mQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
     UINT syncInterval = g_VSync ? 1 : 0;
     UINT presentFlags = g_TearingSupported && !g_VSync ? DXGI_PRESENT_ALLOW_TEARING : 0;
     ThrowIfFailed(mSwapChain->Present(syncInterval, presentFlags));
 
-    g_FrameFenceValues[mCurrentBackBufferIndex] = Signal(mQueue, g_Fence, g_FenceValue);
+    auto fenceValue = mGraphicsQueue->Signal();
     mCurrentBackBufferIndex = mSwapChain->GetCurrentBackBufferIndex();
 
-    WaitForFenceValue(g_Fence, g_FrameFenceValues[mCurrentBackBufferIndex], g_FenceEvent);
+    mGraphicsQueue->WaitForFenceValue(mFrameFenceValues[mCurrentBackBufferIndex]);
   }
 }
 
@@ -674,14 +744,15 @@ void Dx12Renderer::Resize(unsigned aWidth, unsigned aHeight)
 
     // Flush the GPU queue to make sure the swap chain's back buffers
     // are not being referenced by an in-flight command list.
-    Flush(mQueue, g_Fence, g_FenceValue, g_FenceEvent);
+    mGraphicsQueue->Flush();
+
     for (int i = 0; i < g_NumFrames; ++i)
     {
       // Any references to the back buffers must be released
       // before the swap chain can be resized.
       mBackBuffers[i].Reset();
-      g_FrameFenceValues[i] = g_FrameFenceValues[mCurrentBackBufferIndex];
     }
+
     DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
     ThrowIfFailed(mSwapChain->GetDesc(&swapChainDesc));
     ThrowIfFailed(mSwapChain->ResizeBuffers(g_NumFrames, g_ClientWidth, g_ClientHeight,
