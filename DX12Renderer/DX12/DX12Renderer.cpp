@@ -122,21 +122,6 @@ bool CheckTearingSupport()
   return allowTearing == TRUE;
 }
 
-ComPtr<ID3D12CommandQueue> CreateCommandQueue(ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type)
-{
-  ComPtr<ID3D12CommandQueue> d3d12CommandQueue;
-
-  D3D12_COMMAND_QUEUE_DESC desc = {};
-  desc.Type = type;
-  desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
-  desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-  desc.NodeMask = 0;
-
-  ThrowIfFailed(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&d3d12CommandQueue)));
-
-  return d3d12CommandQueue;
-}
-
 ComPtr<IDXGISwapChain4> CreateSwapChain(
   HWND hWnd,
   ComPtr<IDXGIFactory4> aFactory,
@@ -299,6 +284,94 @@ HANDLE CreateEventHandle()
 
   return fenceEvent;
 }
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+// Dx12Queue
+Dx12Queue::Dx12Queue(Microsoft::WRL::ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type)
+{
+  D3D12_COMMAND_QUEUE_DESC desc = {};
+  desc.Type = type;
+  desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+  desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+  desc.NodeMask = 0;
+
+  ThrowIfFailed(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&mQueue)));
+  ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence)));
+
+  mFenceEvent = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+  assert(mFenceEvent && "Failed to create fence event handle.");
+}
+
+Dx12Queue::~Dx12Queue()
+{
+
+}
+
+Microsoft::WRL::ComPtr<ID3D12CommandAllocator> Dx12Queue::CreateCommandAllocator()
+{
+  Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator;
+  ThrowIfFailed(mDevice->CreateCommandAllocator(mCommandListType, IID_PPV_ARGS(&commandAllocator)));
+
+  return commandAllocator;
+}
+
+Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> Dx12Queue::CreateCommandList(Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator)
+{
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList;
+  ThrowIfFailed(mDevice->CreateCommandList(0, mCommandListType, allocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
+
+  return commandList;
+}
+
+// Get an available command list from the command queue.
+Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> Dx12Queue::GetCommandList()
+{
+
+}
+
+// Execute a command list.
+// Returns the fence value to wait for for this command list.
+uint64_t Dx12Queue::ExecuteCommandList(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList)
+{
+  mQueue->ExecuteCommandLists(1, commandList.Get());
+}
+
+uint64_t Dx12Queue::Signal()
+{
+  uint64_t fenceValueForSignal = ++mFenceValue;
+  ThrowIfFailed(mQueue->Signal(mFence.Get(), fenceValueForSignal));
+
+  return fenceValueForSignal;
+}
+
+bool Dx12Queue::IsFenceComplete(uint64_t fenceValue)
+{
+  return mFence->GetCompletedValue() >= fenceValue;
+}
+
+void Dx12Queue::WaitForFenceValue(uint64_t fenceValue)
+{
+  if (!IsFenceComplete(fenceValue))
+  {
+    auto event = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+    assert(event && "Failed to create fence event handle.");
+
+    // Is this function thread safe?
+    mFence->SetEventOnCompletion(fenceValue, event);
+    ::WaitForSingleObject(event, DWORD_MAX);
+
+    ::CloseHandle(event);
+  }
+}
+
+void Dx12Queue::Flush()
+{
+  uint64_t fenceValueForSignal = Signal();
+  WaitForFenceValue(fenceValueForSignal);
+}
+
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Window Management

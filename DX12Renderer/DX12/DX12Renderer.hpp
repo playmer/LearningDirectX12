@@ -33,6 +33,8 @@ using namespace Microsoft::WRL;
 
 #include "DX12Renderer/Renderer.hpp"
 
+#include <queue>
+
 // From DXSampleHelper.h 
 // Source: https://github.com/Microsoft/DirectX-Graphics-Samples
 inline void ThrowIfFailed(HRESULT hr)
@@ -45,6 +47,70 @@ inline void ThrowIfFailed(HRESULT hr)
 
 // The number of swap chain back buffers.
 constexpr uint8_t g_NumFrames = 3;
+
+class Dx12Queue
+{
+public:
+  Dx12Queue(Microsoft::WRL::ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type);
+  virtual ~Dx12Queue();
+
+  // Get an available command list from the command queue.
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> GetCommandList();
+
+  // Execute a command list.
+  // Returns the fence value to wait for for this command list.
+  uint64_t ExecuteCommandList(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList);
+
+  uint64_t Signal();
+  bool IsFenceComplete(uint64_t fenceValue);
+  void WaitForFenceValue(uint64_t fenceValue);
+  void Flush();
+
+  auto operator->() const
+  {
+    return mQueue.Get();
+  }
+
+  auto operator&()
+  {
+    return &mQueue;
+  }
+
+  auto operator&() const
+  {
+    return &mQueue;
+  }
+
+  Microsoft::WRL::ComPtr<ID3D12CommandQueue> GetD3D12CommandQueue() const
+  {
+    return mQueue;
+  }
+
+protected:
+  Microsoft::WRL::ComPtr<ID3D12CommandAllocator> CreateCommandAllocator();
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> CreateCommandList(Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator);
+
+private:
+  // Keep track of command allocators that are "in-flight"
+  struct CommandAllocatorEntry
+  {
+    uint64_t fenceValue;
+    Microsoft::WRL::ComPtr<ID3D12CommandAllocator> commandAllocator;
+  };
+
+  using CommandAllocatorQueue = std::queue<CommandAllocatorEntry>;
+  using CommandListQueue = std::queue< Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> >;
+
+  D3D12_COMMAND_LIST_TYPE                     mCommandListType;
+  Microsoft::WRL::ComPtr<ID3D12Device2>       mDevice;
+  Microsoft::WRL::ComPtr<ID3D12CommandQueue>  mQueue;
+  Microsoft::WRL::ComPtr<ID3D12Fence>         mFence;
+  HANDLE                                      mFenceEvent;
+  uint64_t                                    mFenceValue;
+
+  CommandAllocatorQueue                       mCommandAllocatorQueue;
+  CommandListQueue                            mCommandListQueue;
+};
 
 class Dx12Renderer : public Renderer
 {
