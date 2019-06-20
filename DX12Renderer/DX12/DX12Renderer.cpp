@@ -9,6 +9,17 @@ Dx12Renderer* gRenderer = nullptr;
 
 
 
+struct Dx12GPUAllocatorData
+{
+  Dx12GPUAllocatorData(Dx12Renderer* aRenderer)
+    : mRenderer{ aRenderer }
+  {
+
+  }
+
+  Dx12Renderer* mRenderer;
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 // DX12 Helpers:
 ComPtr<IDXGIFactory4> CreateFactory()
@@ -637,11 +648,6 @@ Texture* Dx12Renderer::CreateTexture(std::string& aFilename, TextureType aType)
   return nullptr;
 }
 
-GPUAllocator* Dx12Renderer::MakeAllocator(std::string const& aAllocatorType, size_t aBlockSize)
-{
-  return nullptr;
-}
-
 
 void Dx12Renderer::Update()
 {
@@ -670,32 +676,8 @@ void Dx12Renderer::Update()
 void Dx12Renderer::Render()
 {
   auto backBuffer = mBackBuffers[mCurrentBackBufferIndex];
-
-  //auto commandAllocator = mCommandAllocators[mCurrentBackBufferIndex];
-  //
-  //commandAllocator->Reset();
-  //mCommandList->Reset(commandAllocator.Get(), nullptr);
-
-
-
-
-
-
-
-  //auto commandQueue = Application::Get().GetCommandQueue(D3D12_COMMAND_LIST_TYPE_DIRECT);
   auto commandList = mGraphicsQueue->GetCommandList();
   
-
-
-
-
-
-
-
-
-
-
-
 
   // Clear the render target.
   {
@@ -831,4 +813,209 @@ bool Dx12Renderer::UpdateWindow()
   }
 
   return true;
+}
+
+GPUAllocator* Dx12Renderer::MakeAllocator(std::string const& aAllocatorType, size_t aBlockSize)
+{
+  return nullptr;
+}
+
+
+
+
+
+
+
+
+template <typename tType>
+uint64_t ToU64(tType aValue)
+{
+  return static_cast<u64>(aValue);
+}
+
+
+//vk::MemoryPropertyFlags ToVulkan(GPUAllocation::MemoryProperty aValue)
+//{
+//  vk::MemoryPropertyFlags toReturn{};
+//
+//  auto value = ToU64(aValue);
+//
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::DeviceLocal)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eDeviceLocal;
+//  }
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostVisible)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostVisible;
+//  }
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCoherent)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostCoherent;
+//  }
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCached)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostCached;
+//  }
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::LazilyAllocated)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eLazilyAllocated;
+//  }
+//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::Protected)))
+//  {
+//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eProtected;
+//  }
+//
+//  return toReturn;
+//}
+
+
+//enum D3D12_HEAP_FLAGS
+//{
+//  D3D12_HEAP_FLAG_NONE = 0,
+//  D3D12_HEAP_FLAG_SHARED = 0x1,
+//  D3D12_HEAP_FLAG_DENY_BUFFERS = 0x4,
+//  D3D12_HEAP_FLAG_ALLOW_DISPLAY = 0x8,
+//  D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER = 0x20,
+//  D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES = 0x40,
+//  D3D12_HEAP_FLAG_DENY_NON_RT_DS_TEXTURES = 0x80,
+//  D3D12_HEAP_FLAG_HARDWARE_PROTECTED = 0x100,
+//  D3D12_HEAP_FLAG_ALLOW_WRITE_WATCH = 0x200,
+//  D3D12_HEAP_FLAG_ALLOW_SHADER_ATOMICS = 0x400,
+//  D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES = 0,
+//  D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS = 0xc0,
+//  D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES = 0x44,
+//  D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES = 0x84
+//}
+
+
+
+//enum D3D12_RESOURCE_STATES
+//{
+//  D3D12_RESOURCE_STATE_COMMON = 0,
+//  D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER = 0x1,
+//  D3D12_RESOURCE_STATE_INDEX_BUFFER = 0x2,
+//  D3D12_RESOURCE_STATE_RENDER_TARGET = 0x4,
+//  D3D12_RESOURCE_STATE_UNORDERED_ACCESS = 0x8,
+//  D3D12_RESOURCE_STATE_DEPTH_WRITE = 0x10,
+//  D3D12_RESOURCE_STATE_DEPTH_READ = 0x20,
+//  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE = 0x40,
+//  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE = 0x80,
+//  D3D12_RESOURCE_STATE_STREAM_OUT = 0x100,
+//  D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT = 0x200,
+//  D3D12_RESOURCE_STATE_COPY_DEST = 0x400,
+//  D3D12_RESOURCE_STATE_COPY_SOURCE = 0x800,
+//  D3D12_RESOURCE_STATE_RESOLVE_DEST = 0x1000,
+//  D3D12_RESOURCE_STATE_RESOLVE_SOURCE = 0x2000,
+//  D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE = 0x400000,
+//  D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE = 0x1000000,
+//  D3D12_RESOURCE_STATE_GENERIC_READ = (((((0x1 | 0x2) | 0x40) | 0x80) | 0x200) | 0x800),
+//  D3D12_RESOURCE_STATE_PRESENT = 0,
+//  D3D12_RESOURCE_STATE_PREDICATION = 0x200,
+//  D3D12_RESOURCE_STATE_VIDEO_DECODE_READ = 0x10000,
+//  D3D12_RESOURCE_STATE_VIDEO_DECODE_WRITE = 0x20000,
+//  D3D12_RESOURCE_STATE_VIDEO_PROCESS_READ = 0x40000,
+//  D3D12_RESOURCE_STATE_VIDEO_PROCESS_WRITE = 0x80000,
+//  D3D12_RESOURCE_STATE_VIDEO_ENCODE_READ = 0x200000,
+//  D3D12_RESOURCE_STATE_VIDEO_ENCODE_WRITE = 0x800000
+//}
+
+D3D12_HEAP_FLAGS ToVulkan(GPUAllocation::BufferUsage aValue)
+{
+  D3D12_HEAP_FLAGS toReturn{};
+
+  auto value = ToU64(aValue);
+
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::TransferSrc)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_COPY_SOURCE);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::TransferDst)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_COPY_DEST);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::UniformTexelBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eUniformTexelBuffer);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::StorageTexelBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eStorageTexelBuffer);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::UniformBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::StorageBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eStorageBuffer);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::IndexBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_INDEX_BUFFER);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::VertexBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+  }
+  if (0 != (value & ToU64(GPUAllocation::BufferUsage::IndirectBuffer)))
+  {
+    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+  }
+
+  return toReturn;
+}
+
+
+
+
+
+
+
+
+std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSize,
+  GPUAllocation::BufferUsage aUsage,
+  GPUAllocation::MemoryProperty aProperties)
+{
+  auto self = mData.Get<Dx12GPUAllocatorData>();
+  
+  auto base = std::make_unique<Dx12UBO>(aSize);
+  //
+  //auto uboData = base->GetData().ConstructAndGet<VkUBOData>();
+  //
+  //auto usage = ToVulkan(aUsage);
+  //auto properties = ToVulkan(aProperties);
+  //
+  //uboData->mBuffer = self->mDevice->createBuffer(aSize,
+  //  ToVulkan(aUsage),
+  //  vk::SharingMode::eExclusive,
+  //  nullptr,
+  //  ToVulkan(aProperties),
+  //  self->mAllocator);
+  //
+  //uboData->mRenderer = self->mRenderer;
+  //
+  //return static_unique_pointer_cast<GPUBufferBase>(std::move(base));
+
+  D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
+
+  
+
+  auto error = self->mRenderer->mDevice->CreateCommittedResource(
+    &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+    D3D12_HEAP_FLAG_NONE,
+    &CD3DX12_RESOURCE_DESC::Buffer(aSize, flags),
+    D3D12_RESOURCE_STATE_COPY_DEST,
+    nullptr,
+    IID_PPV_ARGS(&base->GetBuffer())
+  );
+
+  ThrowIfFailed(error);
+
+  //ThrowIfFailed(device->CreateCommittedResource(
+  //  &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+  //  D3D12_HEAP_FLAG_NONE,
+  //  &CD3DX12_RESOURCE_DESC::Buffer(aSize, flags),
+  //  D3D12_RESOURCE_STATE_COPY_DEST,
+  //  nullptr,
+  //  IID_PPV_ARGS(pDestinationResource)));
 }

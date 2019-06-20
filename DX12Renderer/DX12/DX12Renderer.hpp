@@ -35,6 +35,7 @@ using namespace Microsoft::WRL;
 
 #include <optional>
 #include <queue>
+#include <mutex>
 
 // From DXSampleHelper.h 
 // Source: https://github.com/Microsoft/DirectX-Graphics-Samples
@@ -48,6 +49,46 @@ inline void ThrowIfFailed(HRESULT hr)
 
 // The number of swap chain back buffers.
 constexpr uint8_t g_NumFrames = 3;
+
+class Dx12Renderer;
+
+
+struct Dx12UBOUpdates
+{
+  Dx12UBOUpdates(Dx12Renderer* aRenderer)
+    : mRenderer{ aRenderer }
+  {
+
+  }
+
+  struct Dx12UBOReference
+  {
+    Dx12UBOReference(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer,
+      size_t aBufferOffset,
+      size_t aSize);
+
+    Microsoft::WRL::ComPtr<ID3D12Resource> mBuffer;
+    size_t mBufferOffset;
+    size_t mSize;
+  };
+
+  void Add(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer, uint8_t const* aData, size_t aSize, size_t aOffset);
+
+  template <typename tType>
+  void Add(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer, tType const& aData, size_t aNumber = 1, size_t aOffset = 0)
+  {
+    Add(aBuffer, reinterpret_cast<u8 const*>(&aData), sizeof(tType) * aNumber, aOffset);
+  }
+
+  void Update(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2>& aBuffer);
+
+  std::vector<uint8_t> mData;
+  std::mutex mAddingMutex;
+  std::vector<Dx12UBOReference> mReferences;
+  Microsoft::WRL::ComPtr<ID3D12Resource> mMappingBuffer;
+  Dx12Renderer* mRenderer;
+};
+
 
 class Dx12Queue
 {
@@ -132,6 +173,7 @@ public:
 
   bool UpdateWindow() override;
 
+  Dx12UBOUpdates mUBOUpdates;
 
 public:
   // Window handle.
@@ -171,4 +213,45 @@ public:
   // By default, use windowed mode.
   // Can be toggled with the Alt+Enter or F11
   bool g_Fullscreen = false;
+};
+
+
+struct Dx12UBOData
+{
+  Microsoft::WRL::ComPtr<ID3D12Resource> mBuffer;
+  Dx12Renderer* mRenderer;
+};
+
+class Dx12UBO : public GPUBufferBase
+{
+public:
+  Dx12UBO(size_t aSize)
+    : GPUBufferBase{ aSize }
+  {
+
+  }
+
+  void Update(uint8_t const* aPointer, size_t aBytes, size_t aOffset) override
+  {
+    auto self = mData.Get<Dx12UBOData>();
+
+    self->mRenderer->mUBOUpdates.Add(self->mBuffer, aPointer, aBytes, aOffset);
+  }
+
+  Microsoft::WRL::ComPtr<ID3D12Resource>& GetBuffer()
+  {
+    auto self = mData.Get<Dx12UBOData>();
+
+    return self->mBuffer;
+  }
+};
+
+class Dx12GPUAllocator : public GPUAllocator
+{
+public:
+  Dx12GPUAllocator(size_t aBlockSize, Dx12Renderer* aRenderer);
+  std::unique_ptr<GPUBufferBase> CreateBufferInternal(
+    size_t aSize,
+    GPUAllocation::BufferUsage aUse,
+    GPUAllocation::MemoryProperty aProperties) override;
 };

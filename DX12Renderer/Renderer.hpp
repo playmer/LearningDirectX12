@@ -43,6 +43,14 @@ namespace EnableIf
 }
 
 
+template<typename tTo, typename tFrom>
+std::unique_ptr<tTo> static_unique_pointer_cast(std::unique_ptr<tFrom>&& aValue)
+{
+  //conversion: unique_ptr<FROM>->FROM*->TO*->unique_ptr<TO>
+  return std::unique_ptr<tTo>{static_cast<tTo*>(aValue.release())};
+}
+
+
 template <typename tType>
 inline void GenericDestructByte(byte* aMemory)
 {

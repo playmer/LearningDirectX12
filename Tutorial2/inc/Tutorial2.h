@@ -75,7 +75,7 @@ protected:
 
     virtual void OnResize(ResizeEventArgs& e) override; 
 
-private:
+public:
     // Helper functions
     // Transition a resource
     void TransitionResource(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList,
