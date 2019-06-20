@@ -86,6 +86,8 @@ struct Dx12UBOUpdates
   std::mutex mAddingMutex;
   std::vector<Dx12UBOReference> mReferences;
   Microsoft::WRL::ComPtr<ID3D12Resource> mMappingBuffer;
+  size_t mMappingBufferSize;
+
   Dx12Renderer* mRenderer;
 };
 

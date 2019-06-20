@@ -20,6 +20,87 @@ struct Dx12GPUAllocatorData
   Dx12Renderer* mRenderer;
 };
 
+
+
+Dx12UBOUpdates::Dx12UBOReference::Dx12UBOReference(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer,
+  size_t aBufferOffset,
+  size_t aSize)
+  : mBuffer(aBuffer)
+  , mBufferOffset{ aBufferOffset }
+  , mSize{ aSize }
+{
+
+}
+
+void Dx12UBOUpdates::Add(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer,
+  uint8_t const* aData,
+  size_t aSize,
+  size_t aOffset)
+{
+  std::lock_guard<std::mutex> lock(mAddingMutex);
+  mReferences.emplace_back(aBuffer, aOffset, aSize);
+  mData.insert(mData.end(), aData, aData + aSize);
+}
+
+void Dx12UBOUpdates::Update(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2>& aCommandBuffer)
+{
+  std::lock_guard<std::mutex> lock(mAddingMutex);
+
+  auto size = mData.size();
+
+  if (0 == size)
+  {
+    return;
+  }
+  
+  if ((nullptr == mMappingBuffer) || size < mMappingBufferSize)
+  {
+    ThrowIfFailed(mRenderer->mDevice->CreateCommittedResource(
+      &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+      D3D12_HEAP_FLAG_NONE,
+      &CD3DX12_RESOURCE_DESC::Buffer(size),
+      D3D12_RESOURCE_STATE_COPY_SOURCE,
+      nullptr,
+      IID_PPV_ARGS(&mMappingBuffer)));
+
+    mMappingBufferSize = size;
+  }
+
+  // No reading is required.
+  CD3DX12_RANGE readRange(0, 0);
+
+  void* pData;
+  ThrowIfFailed(mMappingBuffer->Map(0, &readRange, &pData));
+  std::memcpy(pData, mData.data(), size);
+
+  CD3DX12_RANGE writeRange(0, size);
+  mMappingBuffer->Unmap(0, &writeRange);
+
+  size_t dataOffset = 0;
+  
+  for (auto const& reference : mReferences)
+  {
+    //vk::BufferCopy copyOperation{ dataOffset, reference.mBufferOffset, reference.mSize };
+    //
+    //aCommandBuffer->getResourceTracker()->track(reference.mBuffer);
+    //commandBuffer.copyBuffer(*mMappingBuffer, *reference.mBuffer, copyOperation);
+
+    D3D12_RESOURCE_DESC Desc = reference.mBuffer->GetDesc();
+    ID3D12Device* pDevice = mRenderer->mDevice.Get();
+
+    pDevice->GetCopyableFootprints(&Desc, FirstSubresource, NumSubresources, IntermediateOffset, pLayouts, pNumRows, pRowSizesInBytes, &RequiredSize);
+    pDevice->Release();
+
+    UINT64 Result = UpdateSubresources(&aCommandBuffer, reference.mBuffer, mMappingBuffer, FirstSubresource, NumSubresources, RequiredSize, pLayouts, pNumRows, pRowSizesInBytes, pSrcData);
+    
+    dataOffset += reference.mSize;
+  }
+  
+  mData.clear();
+  mReferences.clear();
+}
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 // DX12 Helpers:
 ComPtr<IDXGIFactory4> CreateFactory()
@@ -919,47 +1000,47 @@ uint64_t ToU64(tType aValue)
 //  D3D12_RESOURCE_STATE_VIDEO_ENCODE_WRITE = 0x800000
 //}
 
-D3D12_HEAP_FLAGS ToVulkan(GPUAllocation::BufferUsage aValue)
+D3D12_RESOURCE_STATES ToDx12(GPUAllocation::BufferUsage aValue)
 {
-  D3D12_HEAP_FLAGS toReturn{};
+  D3D12_RESOURCE_STATES toReturn{};
 
   auto value = ToU64(aValue);
 
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::TransferSrc)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_COPY_SOURCE);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_COPY_SOURCE;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::TransferDst)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_COPY_DEST);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_COPY_DEST;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::UniformTexelBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eUniformTexelBuffer);
+    //toReturn = toReturn | eUniformTexelBuffer;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::StorageTexelBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eStorageTexelBuffer);
+    //toReturn = toReturn | eStorageTexelBuffer;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::UniformBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::StorageBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | eStorageBuffer);
+    //toReturn = toReturn | eStorageBuffer;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::IndexBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_INDEX_BUFFER);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_INDEX_BUFFER;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::VertexBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
   }
   if (0 != (value & ToU64(GPUAllocation::BufferUsage::IndirectBuffer)))
   {
-    toReturn = static_cast<D3D12_HEAP_FLAGS>(toReturn | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    toReturn = toReturn | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
   }
 
   return toReturn;
@@ -979,10 +1060,10 @@ std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSi
   auto self = mData.Get<Dx12GPUAllocatorData>();
   
   auto base = std::make_unique<Dx12UBO>(aSize);
-  //
-  //auto uboData = base->GetData().ConstructAndGet<VkUBOData>();
-  //
-  //auto usage = ToVulkan(aUsage);
+  auto uboData = base->GetData().ConstructAndGet<Dx12UBOData>();
+  
+  auto usage = ToDx12(aUsage);
+
   //auto properties = ToVulkan(aProperties);
   //
   //uboData->mBuffer = self->mDevice->createBuffer(aSize,
@@ -991,20 +1072,12 @@ std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSi
   //  nullptr,
   //  ToVulkan(aProperties),
   //  self->mAllocator);
-  //
-  //uboData->mRenderer = self->mRenderer;
-  //
-  //return static_unique_pointer_cast<GPUBufferBase>(std::move(base));
-
-  D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
-
   
-
   auto error = self->mRenderer->mDevice->CreateCommittedResource(
     &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
     D3D12_HEAP_FLAG_NONE,
-    &CD3DX12_RESOURCE_DESC::Buffer(aSize, flags),
-    D3D12_RESOURCE_STATE_COPY_DEST,
+    &CD3DX12_RESOURCE_DESC::Buffer(aSize, D3D12_RESOURCE_FLAG_NONE),
+    usage,
     nullptr,
     IID_PPV_ARGS(&base->GetBuffer())
   );
@@ -1018,4 +1091,9 @@ std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSi
   //  D3D12_RESOURCE_STATE_COPY_DEST,
   //  nullptr,
   //  IID_PPV_ARGS(pDestinationResource)));
+
+
+  uboData->mRenderer = self->mRenderer;
+  
+  return static_unique_pointer_cast<GPUBufferBase>(std::move(base));
 }
