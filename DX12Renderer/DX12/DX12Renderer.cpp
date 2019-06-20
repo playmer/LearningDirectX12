@@ -719,7 +719,6 @@ void Dx12Renderer::Render()
       backBuffer.Get(),
       D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     commandList->ResourceBarrier(1, &barrier);
-    ThrowIfFailed(commandList->Close());
 
     mFrameFenceValues[mCurrentBackBufferIndex] = mGraphicsQueue->ExecuteCommandList(commandList);
 
