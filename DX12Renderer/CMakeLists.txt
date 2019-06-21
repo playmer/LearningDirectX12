@@ -14,6 +14,7 @@ target_compile_features(Renderer PUBLIC cxx_std_17)
 target_link_libraries(Renderer 
 PUBLIC
     DirectXTex
+    glm
     assimp
     d3d12.lib
     dxgi.lib

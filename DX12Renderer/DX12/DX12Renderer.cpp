@@ -7,8 +7,6 @@
 
 Dx12Renderer* gRenderer = nullptr;
 
-
-
 struct Dx12GPUAllocatorData
 {
   Dx12GPUAllocatorData(Dx12Renderer* aRenderer)
@@ -21,25 +19,45 @@ struct Dx12GPUAllocatorData
 };
 
 
+Dx12GPUAllocator::Dx12GPUAllocator(
+  std::string const& aAllocatorType, 
+  size_t aBlockSize, 
+  Dx12Renderer* aRenderer)
+  : GPUAllocator{ aBlockSize }
+{
+  auto self = mData.ConstructAndGet<Dx12GPUAllocatorData>(aRenderer);
+}
 
 Dx12UBOUpdates::Dx12UBOReference::Dx12UBOReference(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer,
   size_t aBufferOffset,
-  size_t aSize)
+  size_t aSize,
+  D3D12_RESOURCE_STATES aState)
   : mBuffer(aBuffer)
   , mBufferOffset{ aBufferOffset }
   , mSize{ aSize }
+  , mState{ aState }
 {
 
 }
 
-void Dx12UBOUpdates::Add(Microsoft::WRL::ComPtr<ID3D12Resource> const& aBuffer,
+void Dx12UBOUpdates::Add(Dx12UBOData const& aBuffer,
   uint8_t const* aData,
   size_t aSize,
   size_t aOffset)
 {
   std::lock_guard<std::mutex> lock(mAddingMutex);
-  mReferences.emplace_back(aBuffer, aOffset, aSize);
+
+  auto& resource = aBuffer.mBuffer;
+
+  mReferences.emplace_back(resource, aOffset, aSize, aBuffer.mState);
   mData.insert(mData.end(), aData, aData + aSize);
+
+  // Populate the transition buffer now, this saves us from an N operation when doing
+  // the buffer copies.
+  mTransitionBarriers.emplace_back(CD3DX12_RESOURCE_BARRIER::Transition(
+    resource.Get(),
+    aBuffer.mState,
+    D3D12_RESOURCE_STATE_COPY_DEST));
 }
 
 void Dx12UBOUpdates::Update(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2>& aCommandBuffer)
@@ -53,23 +71,25 @@ void Dx12UBOUpdates::Update(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2>& 
     return;
   }
   
+  // Create a new buffer if we either don't currently have one, or if our current one
+  // isn't big enough.
   if ((nullptr == mMappingBuffer) || size < mMappingBufferSize)
   {
     ThrowIfFailed(mRenderer->mDevice->CreateCommittedResource(
       &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
       D3D12_HEAP_FLAG_NONE,
       &CD3DX12_RESOURCE_DESC::Buffer(size),
-      D3D12_RESOURCE_STATE_COPY_SOURCE,
+      D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&mMappingBuffer)));
 
     mMappingBufferSize = size;
   }
 
-  // No reading is required.
-  CD3DX12_RANGE readRange(0, 0);
-
+  // Copy data over to the upload buffer.
   void* pData;
+  CD3DX12_RANGE readRange(0, 0); // We don't need to read any data from this buffer.
+
   ThrowIfFailed(mMappingBuffer->Map(0, &readRange, &pData));
   std::memcpy(pData, mData.data(), size);
 
@@ -77,27 +97,43 @@ void Dx12UBOUpdates::Update(Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2>& 
   mMappingBuffer->Unmap(0, &writeRange);
 
   size_t dataOffset = 0;
+
+  // Transition our buffers to their copy states.
+  aCommandBuffer->ResourceBarrier(static_cast<uint32_t>(mTransitionBarriers.size()), mTransitionBarriers.data());
   
+  // Copy from the upload buffer to all the buffers added this frame.
   for (auto const& reference : mReferences)
   {
-    //vk::BufferCopy copyOperation{ dataOffset, reference.mBufferOffset, reference.mSize };
-    //
-    //aCommandBuffer->getResourceTracker()->track(reference.mBuffer);
-    //commandBuffer.copyBuffer(*mMappingBuffer, *reference.mBuffer, copyOperation);
+    aCommandBuffer->CopyBufferRegion(
+      reference.mBuffer.Get(), 
+      reference.mBufferOffset, 
+      mMappingBuffer.Get(), 
+      dataOffset, 
+      reference.mSize);
 
-    D3D12_RESOURCE_DESC Desc = reference.mBuffer->GetDesc();
-    ID3D12Device* pDevice = mRenderer->mDevice.Get();
-
-    pDevice->GetCopyableFootprints(&Desc, FirstSubresource, NumSubresources, IntermediateOffset, pLayouts, pNumRows, pRowSizesInBytes, &RequiredSize);
-    pDevice->Release();
-
-    UINT64 Result = UpdateSubresources(&aCommandBuffer, reference.mBuffer, mMappingBuffer, FirstSubresource, NumSubresources, RequiredSize, pLayouts, pNumRows, pRowSizesInBytes, pSrcData);
-    
     dataOffset += reference.mSize;
   }
+
+  // We now know the number of resources we're copying, so we can remove the transitions to 
+  // the copy state. Then we can create Transition barriers to move buffers back to their 
+  // original resource states 
+  mTransitionBarriers.clear();
+
+  for (auto& reference : mReferences)
+  {
+    mTransitionBarriers.emplace_back(CD3DX12_RESOURCE_BARRIER::Transition(
+      reference.mBuffer.Get(),
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      reference.mState));
+  }
+
+  // And transition the barriers to their final states
+  aCommandBuffer->ResourceBarrier(static_cast<uint32_t>(mTransitionBarriers.size()), mTransitionBarriers.data());
   
+  // Frame cleanup.
   mData.clear();
   mReferences.clear();
+  mTransitionBarriers.clear();
 }
 
 
@@ -647,7 +683,8 @@ HWND CreateWindow(const wchar_t* windowClassName, HINSTANCE hInst,
 // Renderer
 
 
-Dx12Renderer::Dx12Renderer() 
+Dx12Renderer::Dx12Renderer()
+  : mUBOUpdates{this}
 {
   EnableDebugLayer();
   gRenderer = this;
@@ -716,7 +753,7 @@ Dx12Renderer::~Dx12Renderer()
 
 std::unique_ptr<InstantiatedModel> Dx12Renderer::CreateModel(std::string& aMeshFile)
 {
-  return std::make_unique<InstantiatedModel>();
+  return std::make_unique<InstantiatedModel>(this);
 }
 
 void Dx12Renderer::DestroyModel(InstantiatedModel* aModel)
@@ -752,6 +789,16 @@ void Dx12Renderer::Update()
     frameCounter = 0;
     elapsedSeconds = 0.0;
   }
+
+  auto commandBuffer = mGraphicsQueue->GetCommandList();
+  mUBOUpdates.Update(commandBuffer);
+  auto fenceValue = mGraphicsQueue->ExecuteCommandList(commandBuffer);
+  mGraphicsQueue->WaitForFenceValue(fenceValue);
+
+  //auto commandBuffer = mTransferQueue->GetCommandList();
+  //mUBOUpdates.Update(commandBuffer);
+  //auto fenceValue = mTransferQueue->ExecuteCommandList(commandBuffer);
+  //mTransferQueue->WaitForFenceValue(fenceValue);
 }
 
 void Dx12Renderer::Render()
@@ -898,7 +945,20 @@ bool Dx12Renderer::UpdateWindow()
 
 GPUAllocator* Dx12Renderer::MakeAllocator(std::string const& aAllocatorType, size_t aBlockSize)
 {
-  return nullptr;
+  auto it = mAllocators.find(aAllocatorType);
+
+  if (it != mAllocators.end())
+  {
+    return it->second.get();
+  }
+
+  auto allocator = std::make_unique<Dx12GPUAllocator>(aAllocatorType, aBlockSize, this);
+
+  auto ptr = allocator.get();
+  
+  mAllocators.emplace(aAllocatorType, std::move(allocator));
+
+  return ptr;
 }
 
 
@@ -911,43 +971,56 @@ GPUAllocator* Dx12Renderer::MakeAllocator(std::string const& aAllocatorType, siz
 template <typename tType>
 uint64_t ToU64(tType aValue)
 {
-  return static_cast<u64>(aValue);
+  return static_cast<uint64_t>(aValue);
 }
 
 
-//vk::MemoryPropertyFlags ToVulkan(GPUAllocation::MemoryProperty aValue)
+//enum D3D12_HEAP_TYPE
 //{
-//  vk::MemoryPropertyFlags toReturn{};
-//
-//  auto value = ToU64(aValue);
-//
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::DeviceLocal)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eDeviceLocal;
-//  }
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostVisible)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostVisible;
-//  }
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCoherent)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostCoherent;
-//  }
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCached)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eHostCached;
-//  }
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::LazilyAllocated)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eLazilyAllocated;
-//  }
-//  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::Protected)))
-//  {
-//    toReturn = toReturn | vk::MemoryPropertyFlagBits::eProtected;
-//  }
-//
-//  return toReturn;
-//}
+//  D3D12_HEAP_TYPE_DEFAULT = 1,
+//  D3D12_HEAP_TYPE_UPLOAD = 2,
+//  D3D12_HEAP_TYPE_READBACK = 3,
+//  D3D12_HEAP_TYPE_CUSTOM = 4
+//} 	D3D12_HE
+
+D3D12_HEAP_TYPE ToDx12(GPUAllocation::MemoryProperty aValue)
+{
+  D3D12_HEAP_TYPE toReturn{};
+
+  auto value = ToU64(aValue);
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::DeviceLocal)))
+  {
+    return D3D12_HEAP_TYPE_DEFAULT;
+  }
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostVisible)))
+  {
+    return D3D12_HEAP_TYPE_UPLOAD;
+  }
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCoherent)))
+  {
+    return D3D12_HEAP_TYPE_UPLOAD;
+  }
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::HostCached)))
+  {
+    return D3D12_HEAP_TYPE_UPLOAD;
+  }
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::LazilyAllocated)))
+  {
+    return D3D12_HEAP_TYPE_DEFAULT;
+  }
+
+  if (0 != (value & ToU64(GPUAllocation::MemoryProperty::Protected)))
+  {
+    return D3D12_HEAP_TYPE_DEFAULT;
+  }
+
+  return toReturn;
+}
 
 
 //enum D3D12_HEAP_FLAGS
@@ -1047,12 +1120,6 @@ D3D12_RESOURCE_STATES ToDx12(GPUAllocation::BufferUsage aValue)
 }
 
 
-
-
-
-
-
-
 std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSize,
   GPUAllocation::BufferUsage aUsage,
   GPUAllocation::MemoryProperty aProperties)
@@ -1063,37 +1130,241 @@ std::unique_ptr<GPUBufferBase> Dx12GPUAllocator::CreateBufferInternal(size_t aSi
   auto uboData = base->GetData().ConstructAndGet<Dx12UBOData>();
   
   auto usage = ToDx12(aUsage);
+  auto property = ToDx12(aProperties);
 
-  //auto properties = ToVulkan(aProperties);
-  //
-  //uboData->mBuffer = self->mDevice->createBuffer(aSize,
-  //  ToVulkan(aUsage),
-  //  vk::SharingMode::eExclusive,
-  //  nullptr,
-  //  ToVulkan(aProperties),
-  //  self->mAllocator);
-  
-  auto error = self->mRenderer->mDevice->CreateCommittedResource(
-    &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+  ThrowIfFailed(self->mRenderer->mDevice->CreateCommittedResource(
+    &CD3DX12_HEAP_PROPERTIES(property),
     D3D12_HEAP_FLAG_NONE,
     &CD3DX12_RESOURCE_DESC::Buffer(aSize, D3D12_RESOURCE_FLAG_NONE),
     usage,
     nullptr,
     IID_PPV_ARGS(&base->GetBuffer())
-  );
-
-  ThrowIfFailed(error);
-
-  //ThrowIfFailed(device->CreateCommittedResource(
-  //  &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
-  //  D3D12_HEAP_FLAG_NONE,
-  //  &CD3DX12_RESOURCE_DESC::Buffer(aSize, flags),
-  //  D3D12_RESOURCE_STATE_COPY_DEST,
-  //  nullptr,
-  //  IID_PPV_ARGS(pDestinationResource)));
-
+  ));
 
   uboData->mRenderer = self->mRenderer;
+  uboData->mState = usage;
   
   return static_unique_pointer_cast<GPUBufferBase>(std::move(base));
+}
+
+
+
+
+Dx12InstantiatedModel::Dx12InstantiatedModel(std::string& aModelFile, Dx12Renderer* aRenderer)
+  : InstantiatedModel{ aRenderer }
+{
+  mDx12Mesh = aRenderer->CreateMesh(aModelFile);
+  mMesh = mDx12Mesh->mMesh;
+
+  Create();
+
+  CreateShader();
+}
+
+Dx12InstantiatedModel::Dx12InstantiatedModel(Dx12Mesh* aMesh, Dx12Renderer* aRenderer)
+  : InstantiatedModel{ aRenderer }
+  , mDx12Mesh{ aMesh }
+{
+  mMesh = mDx12Mesh->mMesh;
+
+  Create();
+
+  CreateShader();
+}
+
+Dx12InstantiatedModel::~Dx12InstantiatedModel()
+{
+  mRenderer->DestroyModel(this);
+}
+
+void Dx12InstantiatedModel::CreateShader()
+{
+  mPipelineData.clear();
+
+  // create descriptor sets
+  for (auto [submeshIt, i] : enumerate(mDx12Mesh->mSubmeshes))
+  {
+    auto& submesh = *submeshIt;
+
+    submesh->CreateShader();
+
+    CreateDescriptorSet(submesh.get(), i);
+  }
+}
+
+void Dx12InstantiatedModel::CreateDescriptorSet(Dx12Submesh* aSubMesh, size_t aIndex)
+{
+  if (0 == mBuffers.size())
+  {
+    AddBuffer(&mView->GetViewUBO());
+    AddBuffer(&mView->GetLightManager()->GetUBOLightBuffer());
+    AddBuffer(&mView->GetIlluminationUBO());
+    AddBuffer(&mView->GetWaterInfluenceMapManager()->GetUBOMapBuffer());
+    AddBuffer(&mModelUBO);
+  }
+
+  mPipelineData.emplace(aSubMesh, aSubMesh->CreatePipelineData(this));
+}
+
+
+
+
+vk::ImageViewType Convert(TextureViewType aType)
+{
+  switch (aType)
+  {
+  case TextureViewType::e2D:
+  {
+    return vk::ImageViewType::e2D;
+  }
+  case TextureViewType::eCube:
+  {
+    return vk::ImageViewType::eCube;
+  }
+  }
+
+  return vk::ImageViewType{};
+}
+
+///////////////////////////////////////////////////////////////////////////
+// Submesh
+///////////////////////////////////////////////////////////////////////////
+Dx12Submesh::Dx12Submesh(Dx12Mesh* aMesh, Submesh* aSubmesh, Dx12Renderer* aRenderer)
+  : mRenderer{ aRenderer }
+  , mMesh{ aMesh }
+  , mSubmesh{ aSubmesh }
+{
+  Create();
+}
+
+
+void Dx12Submesh::Create()
+{
+  // Load Textures
+  for (auto const& texture : mSubmesh->mData.mTextureData)
+  {
+    mTextures.emplace_back(mRenderer->CreateTexture(texture.mName, Convert(texture.mViewType)));
+  }
+}
+
+void Dx12Submesh::CreateShader()
+{
+  //auto device = mRenderer->mDevice;
+  //
+  //Dx12ShaderDescriptions descriptions;
+  //
+  //mPipelineInfo = mRenderer->GetSurface(aView->GetWindow())->IfShaderExistsCreateOnView(mSubmesh->mData.mShaderSetName, aView);
+  //
+  //if (mPipelineInfo)
+  //{
+  //  return;
+  //}
+  //
+  //descriptions = Dx12ShaderDescriptions{ mSubmesh->CreateShaderDescriptions() };
+  //
+  //auto descriptorSetLayout = mRenderer->mDevice->createDescriptorSetLayout(descriptions.DescriptorSetLayout());
+  //auto pipelineLayout = device->createPipelineLayout(descriptorSetLayout, nullptr);
+  //
+  //// load shader passing our created pipeline layout
+  //mPipelineInfo = mRenderer->GetSurface(aView->GetWindow())->CreateShader(
+  //  mSubmesh->mData.mShaderSetName,
+  //  descriptorSetLayout,
+  //  pipelineLayout,
+  //  descriptions,
+  //  aView);
+}
+
+
+//std::shared_ptr<vkhlf::DescriptorPool> Dx12Submesh::MakePool()
+//{
+//  auto device = mRenderer->mDevice;
+//
+//  // Create the descriptor set and pipeline layouts.
+//  mDescriptorTypes.emplace_back(
+//    vk::DescriptorType::eUniformBuffer,
+//    mPipelineInfo->mDescriptions.CountDescriptorsOfType(vk::DescriptorType::eUniformBuffer));
+//
+//  if (0 != mSamplerTypes.size())
+//  {
+//    mDescriptorTypes.emplace_back(vk::DescriptorType::eCombinedImageSampler, static_cast<u32>(mSamplerTypes.size()));
+//  }
+//
+//  return device->createDescriptorPool({}, 1, mDescriptorTypes);
+//}
+
+SubMeshPipelineData Dx12Submesh::CreatePipelineData(InstantiatedModel* aModel)
+{
+  auto device = mRenderer->mDevice;
+
+  SubMeshPipelineData pipelineData;
+  pipelineData.mPipelineLayout = mPipelineInfo->mPipelineLayout;
+  pipelineData.mDescriptorSet = device->allocateDescriptorSet(
+    MakePool(),
+    mPipelineInfo->mDescriptorSetLayout);
+
+  // Add Uniform Buffers
+  std::vector<VkShaderDescriptions::BufferOrImage> bufferOrImages;
+
+  for (auto& buffer : aModel->GetBuffers())
+  {
+    bufferOrImages.emplace_back(GetBuffer(buffer));
+  }
+
+  //bufferOrImages.emplace_back(GetBuffer(aView->GetViewUBO()));
+  //bufferOrImages.emplace_back(aUBOAnimation);
+  //bufferOrImages.emplace_back(aUBOModelMaterial);
+  //bufferOrImages.emplace_back(aUBOSubmeshMaterial);
+  //bufferOrImages.emplace_back(GetBuffer(aView->GetLightManager()->GetUBOLightBuffer()));
+  //bufferOrImages.emplace_back(GetBuffer(aView->GetIlluminationUBO()));
+  //bufferOrImages.emplace_back(GetBuffer(aView->GetWaterInfluenceMapManager()->GetUBOMapBuffer()));
+  //bufferOrImages.emplace_back(aUBOModel);
+
+  for (auto texture : mTextures)
+  {
+    vkhlf::DescriptorImageInfo textureInfo{
+      texture->mSampler,
+      texture->mImageView,
+      vk::ImageLayout::eShaderReadOnlyOptimal };
+
+    bufferOrImages.emplace_back(textureInfo);
+  }
+
+  auto writeDescriptorSets = mPipelineInfo->mDescriptions.MakeWriteDescriptorSet(
+    &pipelineData.mDescriptorSet,
+    bufferOrImages);
+
+  device->updateDescriptorSets(writeDescriptorSets, nullptr);
+
+  return pipelineData;
+}
+
+void Dx12Submesh::Destroy()
+{
+
+}
+
+Dx12Submesh::~Dx12Submesh()
+{
+
+}
+
+
+///////////////////////////////////////////////////////////////////////////
+// Mesh
+///////////////////////////////////////////////////////////////////////////
+Dx12Mesh::Dx12Mesh(Mesh* aMesh,
+  Dx12Renderer* aRenderer)
+  : mRenderer{ aRenderer }
+  , mMesh{ aMesh }
+{
+  for (auto& part : aMesh->mParts)
+  {
+    auto submesh = std::make_unique<Dx12Submesh>(this, &part, aRenderer);
+    mSubmeshMap.emplace(submesh->mSubmesh->mData.mShaderSetName, submesh.get());
+    mSubmeshes.emplace_back(std::move(submesh));
+  }
+}
+
+Dx12Mesh::~Dx12Mesh()
+{
 }
