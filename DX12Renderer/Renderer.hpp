@@ -17,8 +17,8 @@ class Texture {};
 class Mesh;
 
 
-class aiScene;
-class aiMesh;
+struct aiScene;
+struct aiMesh;
 
 class Renderer;
 
@@ -1076,9 +1076,8 @@ public:
   template <typename tType>
   void AddAttribute(VertexFormat aFormat)
   {
-    DebugObjection(mBindings.size() == 0,
-      "Haven't added a Vertex binding yet, "
-      "so we can't add attribute inputs.");
+    // Haven't added a Vertex binding yet, so we can't add attribute inputs.
+    assert(mBindings.size() != 0);
 
     VertexInputAttributeDescription toAdd;
     toAdd.binding = mBinding - 1;
@@ -1568,11 +1567,6 @@ public:
     return mUBOModelData;
   }
 
-  UBOs::Material GetUBOMaterialData()
-  {
-    return mUBOModelMaterialData;
-  }
-
   Mesh* GetMesh()
   {
     return mMesh;
@@ -1627,7 +1621,7 @@ public:
   void AddBuffer(GPUBufferBase* aBufferRef)
   {
     mBuffers.emplace_back(aBufferRef);
-    mTypeToIndex.emplace(TypeId<tType>(), mBuffers.size());
+    mTypeToIndex.emplace(std::type_index(typeid(tType)), mBuffers.size());
   }
 
   // Does not takes ownership of the buffer
@@ -1815,7 +1809,7 @@ public:
   virtual std::unique_ptr<InstantiatedModel> CreateModel(std::string& aMeshFile) = 0;
   virtual void DestroyModel(InstantiatedModel* aModel) = 0;
 
-  virtual Texture* CreateTexture(std::string& aFilename, TextureType aType) = 0;
+  virtual Texture* CreateTexture(std::string const& aFilename) = 0;
 
   virtual void Update() = 0;
   virtual void Render() = 0;

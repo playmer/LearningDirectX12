@@ -177,9 +177,11 @@ public:
   std::unique_ptr<InstantiatedModel> CreateModel(std::string& aMeshFile) override;
   void DestroyModel(InstantiatedModel* aModel) override;
 
-  Texture* CreateTexture(std::string& aFilename, TextureType aType) override;
+  Texture* CreateTexture(std::string const& aFilename) override;
   
   GPUAllocator* MakeAllocator(std::string const& aAllocatorType, size_t aBlockSize) override;
+
+  Dx12Mesh* CreateMesh(std::string& aFilename);
 
   void Update() override;
   void Render() override;
@@ -330,11 +332,11 @@ public:
 
   std::unordered_map<Dx12Submesh*, SubMeshPipelineData> mPipelineData;
 
-  Dx12Mesh* GetVkMesh()
+  Dx12Mesh* GetDx12Mesh()
   {
-    return mVkMesh;
+    return mDx12Mesh;
   }
 
 private:
-  Dx12Mesh* mVkMesh;
+  Dx12Mesh* mDx12Mesh;
 };

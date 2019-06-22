@@ -761,7 +761,7 @@ void Dx12Renderer::DestroyModel(InstantiatedModel* aModel)
 
 }
 
-Texture* Dx12Renderer::CreateTexture(std::string& aFilename, TextureType aType)
+Texture* Dx12Renderer::CreateTexture(std::string const& aFilename)
 {
   return nullptr;
 }
@@ -963,6 +963,12 @@ GPUAllocator* Dx12Renderer::MakeAllocator(std::string const& aAllocatorType, siz
 
 
 
+
+
+Dx12Mesh* Dx12Renderer::CreateMesh(std::string& aFilename)
+{
+
+}
 
 
 
@@ -1196,10 +1202,9 @@ void Dx12InstantiatedModel::CreateDescriptorSet(Dx12Submesh* aSubMesh, size_t aI
 {
   if (0 == mBuffers.size())
   {
-    AddBuffer(&mView->GetViewUBO());
-    AddBuffer(&mView->GetLightManager()->GetUBOLightBuffer());
-    AddBuffer(&mView->GetIlluminationUBO());
-    AddBuffer(&mView->GetWaterInfluenceMapManager()->GetUBOMapBuffer());
+    //AddBuffer(&mView->GetViewUBO());
+    //AddBuffer(&mView->GetLightManager()->GetUBOLightBuffer());
+    //AddBuffer(&mView->GetIlluminationUBO());
     AddBuffer(&mModelUBO);
   }
 
@@ -1209,22 +1214,22 @@ void Dx12InstantiatedModel::CreateDescriptorSet(Dx12Submesh* aSubMesh, size_t aI
 
 
 
-vk::ImageViewType Convert(TextureViewType aType)
-{
-  switch (aType)
-  {
-  case TextureViewType::e2D:
-  {
-    return vk::ImageViewType::e2D;
-  }
-  case TextureViewType::eCube:
-  {
-    return vk::ImageViewType::eCube;
-  }
-  }
-
-  return vk::ImageViewType{};
-}
+//vk::ImageViewType Convert(TextureViewType aType)
+//{
+//  switch (aType)
+//  {
+//    case TextureViewType::e2D:
+//    {
+//      return vk::ImageViewType::e2D;
+//    }
+//    case TextureViewType::eCube:
+//    {
+//      return vk::ImageViewType::eCube;
+//    }
+//  }
+//
+//  return vk::ImageViewType{};
+//}
 
 ///////////////////////////////////////////////////////////////////////////
 // Submesh
@@ -1243,7 +1248,7 @@ void Dx12Submesh::Create()
   // Load Textures
   for (auto const& texture : mSubmesh->mData.mTextureData)
   {
-    mTextures.emplace_back(mRenderer->CreateTexture(texture.mName, Convert(texture.mViewType)));
+    //mTextures.emplace_back(mRenderer->CreateTexture(texture.mName));
   }
 }
 
@@ -1297,19 +1302,19 @@ SubMeshPipelineData Dx12Submesh::CreatePipelineData(InstantiatedModel* aModel)
   auto device = mRenderer->mDevice;
 
   SubMeshPipelineData pipelineData;
-  pipelineData.mPipelineLayout = mPipelineInfo->mPipelineLayout;
-  pipelineData.mDescriptorSet = device->allocateDescriptorSet(
-    MakePool(),
-    mPipelineInfo->mDescriptorSetLayout);
-
-  // Add Uniform Buffers
-  std::vector<VkShaderDescriptions::BufferOrImage> bufferOrImages;
-
-  for (auto& buffer : aModel->GetBuffers())
-  {
-    bufferOrImages.emplace_back(GetBuffer(buffer));
-  }
-
+  //pipelineData.mPipelineLayout = mPipelineInfo->mPipelineLayout;
+  //pipelineData.mDescriptorSet = device->allocateDescriptorSet(
+  //  MakePool(),
+  //  mPipelineInfo->mDescriptorSetLayout);
+  //
+  //// Add Uniform Buffers
+  //std::vector<VkShaderDescriptions::BufferOrImage> bufferOrImages;
+  //
+  //for (auto& buffer : aModel->GetBuffers())
+  //{
+  //  bufferOrImages.emplace_back(GetBuffer(buffer));
+  //}
+  //
   //bufferOrImages.emplace_back(GetBuffer(aView->GetViewUBO()));
   //bufferOrImages.emplace_back(aUBOAnimation);
   //bufferOrImages.emplace_back(aUBOModelMaterial);
@@ -1318,23 +1323,23 @@ SubMeshPipelineData Dx12Submesh::CreatePipelineData(InstantiatedModel* aModel)
   //bufferOrImages.emplace_back(GetBuffer(aView->GetIlluminationUBO()));
   //bufferOrImages.emplace_back(GetBuffer(aView->GetWaterInfluenceMapManager()->GetUBOMapBuffer()));
   //bufferOrImages.emplace_back(aUBOModel);
-
-  for (auto texture : mTextures)
-  {
-    vkhlf::DescriptorImageInfo textureInfo{
-      texture->mSampler,
-      texture->mImageView,
-      vk::ImageLayout::eShaderReadOnlyOptimal };
-
-    bufferOrImages.emplace_back(textureInfo);
-  }
-
-  auto writeDescriptorSets = mPipelineInfo->mDescriptions.MakeWriteDescriptorSet(
-    &pipelineData.mDescriptorSet,
-    bufferOrImages);
-
-  device->updateDescriptorSets(writeDescriptorSets, nullptr);
-
+  //
+  //for (auto texture : mTextures)
+  //{
+  //  vkhlf::DescriptorImageInfo textureInfo{
+  //    texture->mSampler,
+  //    texture->mImageView,
+  //    vk::ImageLayout::eShaderReadOnlyOptimal };
+  //
+  //  bufferOrImages.emplace_back(textureInfo);
+  //}
+  //
+  //auto writeDescriptorSets = mPipelineInfo->mDescriptions.MakeWriteDescriptorSet(
+  //  &pipelineData.mDescriptorSet,
+  //  bufferOrImages);
+  //
+  //device->updateDescriptorSets(writeDescriptorSets, nullptr);
+  //
   return pipelineData;
 }
 

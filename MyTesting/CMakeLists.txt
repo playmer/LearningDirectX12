@@ -2,7 +2,7 @@ add_executable(MyTesting)
 
 target_sources(MyTesting PRIVATE main.cpp)
 
-target_link_libraries(MyTesting PRIVATE Renderer glm)
+target_link_libraries(MyTesting PRIVATE Renderer fmt glm)
 
 target_compile_features(MyTesting PUBLIC cxx_std_17)
 

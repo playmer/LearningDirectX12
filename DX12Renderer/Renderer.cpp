@@ -8,6 +8,8 @@
 
 #include "glm/gtc/type_ptr.hpp"
 
+#include "fmt/format.h"
+
 #include "DX12Renderer/Renderer.hpp"
 
 
@@ -60,6 +62,26 @@ void InstantiatedModel::Create()
 
 
 
+
+SubmeshData::TextureType ToYTE(aiTextureType aType)
+{
+  switch (aType)
+  {
+  case aiTextureType_DIFFUSE: return SubmeshData::TextureType::Diffuse;
+  case aiTextureType_SPECULAR: return SubmeshData::TextureType::Specular;
+  case aiTextureType_AMBIENT: return SubmeshData::TextureType::Ambient;
+  case aiTextureType_EMISSIVE: return SubmeshData::TextureType::Emissive;
+  case aiTextureType_HEIGHT: return SubmeshData::TextureType::Height;
+  case aiTextureType_NORMALS: return SubmeshData::TextureType::Normal;
+  case aiTextureType_SHININESS: return SubmeshData::TextureType::Shininess;
+  case aiTextureType_OPACITY: return SubmeshData::TextureType::Opacity;
+  case aiTextureType_DISPLACEMENT: return SubmeshData::TextureType::Displacment;
+  case aiTextureType_LIGHTMAP: return SubmeshData::TextureType::Lightmap;
+  case aiTextureType_REFLECTION: return SubmeshData::TextureType::Reflection;
+  }
+
+  return SubmeshData::TextureType::Unknown;
+}
 
 
 
@@ -258,7 +280,7 @@ Submesh::Submesh(Renderer* aRenderer,
 
     mData.mTextureData.emplace_back(textureName, TextureViewType::e2D, ToYTE(type));
     
-    aRenderer->CreateTexture(textureName, TextureType::e2D);
+    aRenderer->CreateTexture(textureName);
   }
 
   mData.mShaderSetName = "Phong";
@@ -453,7 +475,7 @@ void Submesh::CreateGPUBuffers()
   mVertexBufferData.mBinormalBuffer = CreateBuffer<glm::vec3>(allocator, mData.mVertexData.mBinormalData.size());
   mVertexBufferData.mBitangentBuffer = CreateBuffer<glm::vec3>(allocator, mData.mVertexData.mBitangentData.size());
 
-  mIndexBuffer = allocator->CreateBuffer<u32>(mData.mIndexData.size(),
+  mIndexBuffer = allocator->CreateBuffer<uint32_t>(mData.mIndexData.size(),
     GPUAllocation::BufferUsage::TransferDst |
     GPUAllocation::BufferUsage::IndexBuffer,
     GPUAllocation::MemoryProperty::DeviceLocal);

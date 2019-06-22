@@ -1,3 +1,4 @@
+add_subdirectory(fmt)
 
 ##########################################################################
 # Turn off/configure various parts of glm.
